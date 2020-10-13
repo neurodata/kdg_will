@@ -3,8 +3,9 @@ from joblib import Parallel, delayed
 from keras.utils import to_categorical
 from tqdm import tqdm
 from scipy.stats import multivariate_normal
+from sklearn.base import ClassifierMixin, BaseEstimator
 
-class KDG:
+class KDG(ClassifierMixin, BaseEstimator):
     def __init__(self):
         pass
     
