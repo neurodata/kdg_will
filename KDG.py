@@ -4,6 +4,7 @@ from keras.utils import to_categorical
 from tqdm import tqdm
 from scipy.stats import multivariate_normal
 from sklearn.base import ClassifierMixin, BaseEstimator
+from itertools import product
 
 class KDG(ClassifierMixin, BaseEstimator):
     def __init__(self):
@@ -23,10 +24,12 @@ class KDG(ClassifierMixin, BaseEstimator):
         #a single class from the class-wise mean in that leaf
         self.polytope_means_cov = []
         
-        for polytope_ids in predicted_leaf_ids_across_trees:
-            for polytope_value in np.unique(polytope_ids, axis = 0):
+        unique_polytope_ids_across_trees = [np.unique(predicted_leaf_ids_across_trees[i]) for i in range(len(predicted_leaf_ids_across_trees))]
+        
+        for tree_id, unique_polytopes in enumerate(unique_polytope_ids_across_trees):
+            for polytope_id in unique_polytopes:
                 for y_val in np.unique(y):
-                    idxs_in_polytope_of_class = np.where((y == y_val) & np.all(polytope_ids == polytope_value, axis = 1))[0]
+                    idxs_in_polytope_of_class = np.where((y == y_val) & (predicted_leaf_ids_across_trees[tree_id] == polytope_id))[0]
                     if len(idxs_in_polytope_of_class) > 1:
                         mean = np.mean(X[idxs_in_polytope_of_class], axis = 0)
                         self.polytope_means_X.append(mean)
@@ -43,7 +46,7 @@ class KDG(ClassifierMixin, BaseEstimator):
                         self.polytope_means_cov.append(np.eye(len(cov)) * cov)
         return self
                     
-    def predict_proba(self, X, pooling = "polytope"):
+    def predict_proba(self, X, pooling = "class"):
         y_vals = np.unique(self.polytope_means_y)
         y_hat = np.zeros((len(X), len(y_vals)))
         
