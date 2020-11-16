@@ -64,11 +64,6 @@ class KDG(ClassifierMixin, BaseEstimator):
             var = multivariate_normal(mean=polytope_mean_X, cov=polytope_mean_cov, allow_singular=True)
             return var.pdf(X) * polytope_mean_weight / np.sum(weights_of_class)
         
-        '''  
-        likelihoods = Parallel(n_jobs=10, verbose=1)(delayed(compute_pdf)(
-            X, polytope_mean_id
-        ) for polytope_mean_id in range(len(self.polytope_means_X)))
-        '''
         likelihoods = np.array([compute_pdf(X, polytope_mean_id) for polytope_mean_id in range(len(self.polytope_means_X))])
         for polytope_id in range(len(likelihoods)):
             y_hat[:, self.polytope_means_y[polytope_id]] += likelihoods[polytope_id]
