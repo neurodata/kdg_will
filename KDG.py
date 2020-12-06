@@ -4,7 +4,8 @@ from keras.utils import to_categorical
 from tqdm import tqdm
 from scipy.stats import multivariate_normal
 from sklearn.base import ClassifierMixin, BaseEstimator
-from itertools import product
+from tqdm import tqdm
+from joblib import Parallel, delayed
 
 class KDG(ClassifierMixin, BaseEstimator):
     def __init__(self):
@@ -30,7 +31,7 @@ class KDG(ClassifierMixin, BaseEstimator):
             for polytope_id in unique_polytopes:
                 for y_val in np.unique(y):
                     idxs_in_polytope_of_class = np.where((y == y_val) & (predicted_leaf_ids_across_trees[tree_id] == polytope_id))[0]
-                    if len(idxs_in_polytope_of_class) > 1:
+                    if len(idxs_in_polytope_of_class) > 0:
                         mean = np.mean(X[idxs_in_polytope_of_class], axis = 0)
                         self.polytope_means_X.append(mean)
                         #we already know the y value, so just append it 
@@ -42,13 +43,14 @@ class KDG(ClassifierMixin, BaseEstimator):
                         #from the mean X-value of the points in that leaf corresponding to that y value
                         #compute the covariance as the average distance of the class-wise points in that leaf 
                         #and append to the aggregate array
-                        cov = np.mean((X[idxs_in_polytope_of_class] - mean) ** 2, axis = 0)
+                        cov = np.mean((np.nan_to_num(X[idxs_in_polytope_of_class]) - np.nan_to_num(mean)) ** 2, axis = 0)
                         self.polytope_means_cov.append(np.eye(len(cov)) * cov)
+        self.unique_y_vals = np.unique(y)
         return self
                     
     def predict_proba(self, X, pooling = "class"):
         y_vals = np.unique(self.polytope_means_y)
-        y_hat = np.zeros((len(X), len(y_vals)))
+        y_hat = np.zeros((len(X), np.max(self.unique_y_vals) + 1))
         
         def compute_pdf(X, polytope_mean_id):
             polytope_mean_X = self.polytope_means_X[polytope_mean_id]
@@ -60,11 +62,12 @@ class KDG(ClassifierMixin, BaseEstimator):
             else:
                 covs_of_class = np.array(self.polytope_means_cov)[np.where(polytope_mean_y ==self.polytope_means_y)[0]]
                 weights_of_class = np.array(self.polytope_means_weight)[np.where(polytope_mean_y ==self.polytope_means_y)[0]]
-            polytope_mean_cov = np.average(covs_of_class, weights = weights_of_class, axis = 0)
+            weights_greater_than_one = np.where(weights_of_class > 1)[0]
+            polytope_mean_cov = np.average(covs_of_class[weights_greater_than_one], weights = weights_of_class[weights_greater_than_one], axis = 0)
             var = multivariate_normal(mean=polytope_mean_X, cov=polytope_mean_cov, allow_singular=True)
             return var.pdf(X) * polytope_mean_weight / np.sum(weights_of_class)
         
-        likelihoods = np.array([compute_pdf(X, polytope_mean_id) for polytope_mean_id in range(len(self.polytope_means_X))])
+        likelihoods = Parallel(n_jobs = -1, verbose = True)(delayed(compute_pdf)(X, polytope_mean_id) for polytope_mean_id in range(len(self.polytope_means_X)))
         for polytope_id in range(len(likelihoods)):
             y_hat[:, self.polytope_means_y[polytope_id]] += likelihoods[polytope_id]
         return y_hat
