@@ -4,8 +4,6 @@ from keras.utils import to_categorical
 from tqdm import tqdm
 from scipy.stats import multivariate_normal
 from sklearn.base import ClassifierMixin, BaseEstimator
-from tqdm import tqdm
-from joblib import Parallel, delayed
 
 class KDG(ClassifierMixin, BaseEstimator):
     def __init__(self):
@@ -25,13 +23,11 @@ class KDG(ClassifierMixin, BaseEstimator):
         #a single class from the class-wise mean in that leaf
         self.polytope_means_cov = []
         
-        unique_polytope_ids_across_trees = [np.unique(predicted_leaf_ids_across_trees[i]) for i in range(len(predicted_leaf_ids_across_trees))]
-        
-        for tree_id, unique_polytopes in enumerate(unique_polytope_ids_across_trees):
-            for polytope_id in unique_polytopes:
+        for polytope_ids in predicted_leaf_ids_across_trees:
+            for polytope_value in np.unique(polytope_ids, axis = 0):
                 for y_val in np.unique(y):
-                    idxs_in_polytope_of_class = np.where((y == y_val) & (predicted_leaf_ids_across_trees[tree_id] == polytope_id))[0]
-                    if len(idxs_in_polytope_of_class) > 0:
+                    idxs_in_polytope_of_class = np.where((y == y_val) & (polytope_ids == polytope_value))[0]
+                    if len(idxs_in_polytope_of_class) > 1:
                         mean = np.mean(X[idxs_in_polytope_of_class], axis = 0)
                         self.polytope_means_X.append(mean)
                         #we already know the y value, so just append it 
@@ -43,31 +39,34 @@ class KDG(ClassifierMixin, BaseEstimator):
                         #from the mean X-value of the points in that leaf corresponding to that y value
                         #compute the covariance as the average distance of the class-wise points in that leaf 
                         #and append to the aggregate array
-                        cov = np.mean((np.nan_to_num(X[idxs_in_polytope_of_class]) - np.nan_to_num(mean)) ** 2, axis = 0)
+                        cov = np.mean((X[idxs_in_polytope_of_class] - mean) ** 2, axis = 0)
                         self.polytope_means_cov.append(np.eye(len(cov)) * cov)
-        self.unique_y_vals = np.unique(y)
         return self
                     
-    def predict_proba(self, X, pooling = "class"):
+    def predict_proba(self, X, pooling = "polytope"):
         y_vals = np.unique(self.polytope_means_y)
-        y_hat = np.zeros((len(X), np.max(self.unique_y_vals) + 1))
+        y_hat = np.zeros((len(X), len(y_vals)))
         
         def compute_pdf(X, polytope_mean_id):
             polytope_mean_X = self.polytope_means_X[polytope_mean_id]
             polytope_mean_y = self.polytope_means_y[polytope_mean_id]
             polytope_mean_weight = self.polytope_means_weight[polytope_mean_id]
-            if pooling == "polytope":
-                covs_of_class = np.array(self.polytope_means_cov)[np.where(polytope_mean_X ==self.polytope_means_X)[0]]
-                weights_of_class = np.array(self.polytope_means_weight)[np.where(polytope_mean_X ==self.polytope_means_X)[0]]
-            else:
-                covs_of_class = np.array(self.polytope_means_cov)[np.where(polytope_mean_y ==self.polytope_means_y)[0]]
-                weights_of_class = np.array(self.polytope_means_weight)[np.where(polytope_mean_y ==self.polytope_means_y)[0]]
-            weights_greater_than_one = np.where(weights_of_class > 1)[0]
-            polytope_mean_cov = np.average(covs_of_class[weights_greater_than_one], weights = weights_of_class[weights_greater_than_one], axis = 0)
+            
+            covs = np.array(self.polytope_means_cov)[np.where(polytope_mean_y ==self.polytope_means_y)[0]]
+            cov_weights = np.array(self.polytope_means_weight)[np.where(polytope_mean_y ==self.polytope_means_y)[0]]
+            polytope_mean_cov = np.average(covs, weights = cov_weights, axis = 0)
+            
             var = multivariate_normal(mean=polytope_mean_X, cov=polytope_mean_cov, allow_singular=True)
+            
+            weights_of_class = np.array(self.polytope_means_weight)[np.where(polytope_mean_y ==self.polytope_means_y)[0]]
             return var.pdf(X) * polytope_mean_weight / np.sum(weights_of_class)
         
-        likelihoods = Parallel(n_jobs = -1, verbose = True)(delayed(compute_pdf)(X, polytope_mean_id) for polytope_mean_id in range(len(self.polytope_means_X)))
+        '''  
+        likelihoods = Parallel(n_jobs=10, verbose=1)(delayed(compute_pdf)(
+            X, polytope_mean_id
+        ) for polytope_mean_id in range(len(self.polytope_means_X)))
+        '''
+        likelihoods = np.array([compute_pdf(X, polytope_mean_id) for polytope_mean_id in range(len(self.polytope_means_X))])
         for polytope_id in range(len(likelihoods)):
             y_hat[:, self.polytope_means_y[polytope_id]] += likelihoods[polytope_id]
         return y_hat
